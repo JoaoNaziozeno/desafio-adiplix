@@ -8,9 +8,6 @@ use App\Migracoes\Payloads\PlanoPayload;
 
 class PlanoMigrationService
 {
-    /**
-     * Executa a migração dos planos e retorna o mapa de IDs em memória.
-     */
     public function migrar(): array
     {
         $planosOrigem = DB::connection('sistema_proprio')
@@ -22,18 +19,19 @@ class PlanoMigrationService
         $mapaPlanos = [];
 
         foreach ($planosOrigem as $plano) {
-            // 1. Alimenta a Factory do Plano
+            // Alimenta a Factory do Plano
             $arrayPlanoDestino = PlanoPayload::criar([
                 'IdFilial'   => 1, 
                 'Plano'      => trim($plano->plano),
                 'Valor'      => $plano->valor,
-                'Data'       => now()->format('Y-m-d H:i:s'),
-                'Usuario'    => 'Migracao_Adiplix',
+                'Data'       => now()->format('Y-m-d'),
+                'Usuario'    => 1,
                 'externo_id' => trim($plano->plano) . '_' . $plano->valor
             ]);
 
             // 2. CORREÇÃO: Remove a coluna inexistente que veio do Payload padrão
             unset($arrayPlanoDestino['plano_carteirinha_id']);
+            unset($arrayPlanoDestino['limite_parcelas_visiveis_no_app']);
 
             // 3. Insere no banco de destino limpo
             $idPlanoCriado = DB::table('plano')
