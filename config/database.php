@@ -64,7 +64,7 @@ return [
             ]) : [],
         ],
 
-        'banco_origem' => [
+        'sistema_proprio' => [
             'driver' => 'mysql',
             'host' => env('DB_OLD_HOST', '127.0.0.1'),
             'port' => env('DB_OLD_PORT', '3306'),
