@@ -2,12 +2,21 @@
 
 namespace App\Migracoes\Services;
 
+use Exception;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use App\Migracoes\Payloads\PlanoPayload;
 
 class PlanoMigrationService
 {
+    /**
+     * Armazena inconsistências encontradas durante a migração.
+     */
+    private array $inconsistencias = [];
+
+    /**
+     * Executa a migração dos planos e retorna o mapa de IDs.
+     */
     public function migrar(): array
     {
         $planosOrigem = DB::connection('sistema_proprio')
@@ -19,29 +28,51 @@ class PlanoMigrationService
         $mapaPlanos = [];
 
         foreach ($planosOrigem as $plano) {
-            // Alimenta a Factory do Plano
-            $arrayPlanoDestino = PlanoPayload::criar([
-                'IdFilial'   => 1, 
-                'Plano'      => trim($plano->plano),
-                'Valor'      => $plano->valor,
-                'Data'       => now()->format('Y-m-d'),
-                'Usuario'    => 1,
-                'externo_id' => trim($plano->plano) . '_' . $plano->valor
-            ]);
 
-            // 2. CORREÇÃO: Remove a coluna inexistente que veio do Payload padrão
-            unset($arrayPlanoDestino['plano_carteirinha_id']);
-            unset($arrayPlanoDestino['limite_parcelas_visiveis_no_app']);
+            try {
 
-            // 3. Insere no banco de destino limpo
-            $idPlanoCriado = DB::table('plano')
-                ->insertGetId($arrayPlanoDestino);
+                DB::transaction(function () use ($plano, &$mapaPlanos) {
+                    $arrayPlanoDestino = PlanoPayload::criar([
+                        'IdFilial'   => 1,
+                        'Plano'      => trim($plano->plano),
+                        'Valor'      => $plano->valor,
+                        'Data'       => now()->format('Y-m-d'),
+                        'Usuario'    => 1,
+                        'externo_id' => trim($plano->plano) . '_' . $plano->valor
+                    ]);
 
-            // Cria a chave única na memória para o De-Para
-            $chaveMapa = Str::slug($plano->plano) . '_' . (float)$plano->valor;
-            $mapaPlanos[$chaveMapa] = $idPlanoCriado;
+                    // Remove colunas inexistentes na tabela destino
+                    unset($arrayPlanoDestino['plano_carteirinha_id']);
+                    unset($arrayPlanoDestino['limite_parcelas_visiveis_no_app']);
+
+                    // Insere no banco destino
+                    $idPlanoCriado = DB::table('plano')
+                        ->insertGetId($arrayPlanoDestino);
+
+                    // Cria chave única para o mapa em memória
+                    $chaveMapa = Str::slug($plano->plano) . '_' . (float)$plano->valor;
+
+                    $mapaPlanos[$chaveMapa] = $idPlanoCriado;
+                });
+
+            } catch (Exception $e) {
+
+                // Registra inconsistência e continua a migração
+                $this->inconsistencias[] = [
+                    'Plano' => trim($plano->plano),
+                    'Erro'  => $e->getMessage()
+                ];
+            }
         }
 
         return $mapaPlanos;
+    }
+
+    /**
+     * Retorna lista de inconsistências encontradas.
+     */
+    public function getInconsistencias(): array
+    {
+        return $this->inconsistencias;
     }
 }

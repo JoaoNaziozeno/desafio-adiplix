@@ -3,14 +3,12 @@
 namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\DB;
 use App\Migracoes\Services\PlanoMigrationService;
 use App\Migracoes\Services\PessoaMigrationService;
 use App\Migracoes\Services\ContratoMigrationService;
 
 class MigrarAdiplix extends Command
 {
-    // Assinatura do comando no terminal
     protected $signature = 'migrar:desafio';
     protected $description = 'Orquestrador modular da migração Adiplix';
 
@@ -18,48 +16,50 @@ class MigrarAdiplix extends Command
     {
         $this->info("Iniciando o processo de migração de dados...");
 
-        // Inicia a transação para garantir que não salve dados parciais em caso de erro
-        DB::beginTransaction();
+        // =========================
+        // MÓDULO DE PLANOS
+        // =========================
+        $this->comment("Processando Módulo de Planos...");
 
-        try {
-            // 1. Processa o Módulo de Planos e guarda o mapa de IDs
-            $this->comment("Processando Módulo de Planos...");
-            $planoService = new PlanoMigrationService();
-            $mapaPlanos = $planoService->migrar();
-            $this->info("Planos migrados com sucesso.");
+        $planoService = new PlanoMigrationService();
 
-            // 2. Instancia o Módulo de Pessoas e de Contratos
-            $pessoaService = new PessoaMigrationService();
-            $contratoService = new ContratoMigrationService($pessoaService);
+        $mapaPlanos = $planoService->migrar();
 
-            // 3. Executa a migração dos Contratos (que cria as pessoas 1:1 automaticamente)
-            $this->comment("Processando Módulos de Contratos e Pessoas...");
-            $contratoService->migrar($mapaPlanos);
-            $this->info("Contratos e pessoas migrados com sucesso.");
+        $this->info("Planos processados.");
 
-            // Se tudo correr bem, salva as alterações no banco
-            DB::commit();
-            $this->info("=== Migração concluída com sucesso no banco de dados ===");
+        // =========================
+        // MÓDULO DE PESSOAS/CONTRATOS
+        // =========================
+        $this->comment("Processando Módulos de Contratos e Pessoas...");
 
-            // 4. Exibe o Relatório do Módulo 4 no terminal
-            $metricas = $pessoaService->getMetricas();
-            $this->exibirRelatorioFinal($metricas);
+        $pessoaService = new PessoaMigrationService();
 
-            return Command::SUCCESS;
+        $contratoService = new ContratoMigrationService($pessoaService);
+        $contratoService->migrar($mapaPlanos);
+        $this->info("Contratos e pessoas processados.");
 
-        } catch (\Exception $e) {
-            // Se houver qualquer falha, desfaz todas as inserções
-            DB::rollBack();
-            $this->error("Erro crítico na migração: " . $e->getMessage());
-            return Command::FAILURE;
-        }
+        // =========================
+        // RELATÓRIO FINAL
+        // =========================
+        $this->exibirRelatorioFinal(
+            $pessoaService->getMetricas(),
+            $pessoaService->getInconsistencias(),
+            $planoService->getInconsistencias(),
+            $contratoService->getInconsistencias()
+        );
+
+        $this->info("=== Migração finalizada ===");
+
+        return Command::SUCCESS;
     }
 
-    /**
-     * Monta o relatório visual exigido no Módulo 4.
-     */
-    private function exibirRelatorioFinal(array $metricas): void
-    {
+    private function exibirRelatorioFinal(
+        array $metricas,
+        array $inconsistenciasPessoas,
+        array $inconsistenciasPlanos,
+        array $inconsistenciasContratos
+    ): void {
+
         $this->newLine();
         $this->line("--------------------------------------------------");
         $this->info("               RELATÓRIO DE MÉTRICAS              ");
@@ -68,13 +68,39 @@ class MigrarAdiplix extends Command
         $this->line("Total de E-mails Inconsistentes ignorados: " . count($metricas['emails_inconsistentes']));
         $this->line("--------------------------------------------------");
 
+        // EMAILS INVÁLIDOS
         if (count($metricas['emails_inconsistentes']) > 0) {
             $this->warn("Lista de E-mails Inconsistentes:");
-            
-            // Exibe os e-mails inválidos em formato de tabela no terminal
             $this->table(
                 ['ID Pessoa Origem', 'E-mail Inconsistente'],
                 $metricas['emails_inconsistentes']
+            );
+        }
+
+        //PESSOAS COM ERRO
+        if (count($inconsistenciasPessoas) > 0) {
+            $this->warn("Pessoas não migradas:");
+            $this->table(
+                ['ID Pessoa Origem', 'Erro'],
+                $inconsistenciasPessoas
+            );
+        }
+
+        // PLANOS COM ERRO
+        if (count($inconsistenciasPlanos) > 0) {
+            $this->warn("Planos não migrados:");
+            $this->table(
+                ['Plano', 'Erro'],
+                $inconsistenciasPlanos
+            );
+        }
+
+        // CONTRATOS COM ERRO
+        if (count($inconsistenciasContratos) > 0) {
+            $this->warn("Contratos não migrados:");
+            $this->table(
+                ['Contrato', 'Erro'],
+                $inconsistenciasContratos
             );
         }
     }
